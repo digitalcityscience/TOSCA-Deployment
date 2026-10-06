@@ -1,0 +1,22 @@
+services:
+  app:
+    image: ${TOSCA_IMAGE:-ghcr.io/digitalcityscience/tosca:latest}
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  proxy:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
