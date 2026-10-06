@@ -1,0 +1,9 @@
+repos:
+  backend:
+    url: https://github.com/digitalcityscience/TOSCA-Backend.git
+    branch: main
+    path: ../TOSCA-Backend
+  frontend:
+    url: https://github.com/digitalcityscience/TOSCA-2.git
+    branch: main
+    path: ../TOSCA-2

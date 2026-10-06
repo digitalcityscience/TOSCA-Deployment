@@ -1,0 +1,118 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: tosca-db
+    env_file: ../TOSCA-Backend/.env.prod
+    environment:
+      POSTGRES_DB: ${PG_DATABASE}
+      POSTGRES_USER: ${PG_SUPERUSER}
+      POSTGRES_PASSWORD: ${PG_SUPERPASS}
+      PG_API_USER: ${PG_API_USER}
+      PG_API_PASSWORD: ${PG_API_PASSWORD}
+      PG_GS_USER: ${PG_GS_USER}
+      PG_GS_PASSWORD: ${PG_GS_PASSWORD}
+      PG_SCHEMA_API: ${PG_SCHEMA_API}
+      PG_SCHEMA_GEOSERVER: ${PG_SCHEMA_GEOSERVER}
+      PG_SCHEMA_GIS: ${PG_SCHEMA_GIS}
+      PG_SCHEMA_JDBCCONF: ${PG_SCHEMA_JDBCCONF}
+    volumes:
+      - prod_pg_data:/var/lib/postgresql/data
+      - ../TOSCA-Backend/docker/postgis:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  geoserver:
+    image: ghcr.io/digitalcityscience/tosca-geoserver:${GEOSERVER_VERSION}
+    pull_policy: always
+    container_name: tosca-geoserver-prod
+    env_file: ../TOSCA-Backend/.env.prod
+    environment:
+      GEOSERVER_DATA_DIR: ${GEOSERVER_DATA_DIR:-/geoserver_data/data}
+      GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER}
+      GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_ADMIN_PASSWORD}
+      GEOSERVER_DB_HOST: db
+      GEOSERVER_DB_PORT: 5432
+      GEOSERVER_DB_NAME: ${PG_DATABASE}
+      GEOSERVER_DB_USER: ${PG_GS_USER}
+      GEOSERVER_DB_PASSWORD: ${PG_GS_PASSWORD}
+      GEOSERVER_DB_SCHEMA: ${PG_SCHEMA_GEOSERVER}
+    ports:
+      - "${GEOSERVER_HOST_PORT:-8585}:8080"
+    volumes:
+      - geoserver_data:/geoserver_data/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  django:
+    image: tosca-backend:${BACKEND_IMAGE_TAG}
+    build:
+      context: ../TOSCA-Backend
+      dockerfile: docker/django/Dockerfile.prod
+    container_name: tosca-django
+    env_file: ../TOSCA-Backend/.env.prod
+    environment:
+      ENV: prod
+      ENV_TYPE: production
+      DJANGO_SETTINGS_MODULE: tosca_api.settings.production
+      DATABASE_URL: postgresql://${PG_API_USER}:${PG_API_PASSWORD}@db:5432/${PG_DATABASE}
+      PG_HOST: db
+      PG_DOCKER_PORT: 5432
+      DJANGO_STATIC_URL: /static/
+      DJANGO_STATIC_ROOT: /app/staticfiles
+      DJANGO_MEDIA_URL: /media/
+      DJANGO_MEDIA_ROOT: /app/media
+      RUN_MIGRATIONS_ON_STARTUP: "false"
+    volumes:
+      - media_files:/app/media
+      - static_files:/app/staticfiles
+      - prod_django_logs:/app/logs
+    ports:
+      - "${DJANGO_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      geoserver:
+        condition: service_started
+    restart: unless-stopped
+
+  web:
+    image: tosca-frontend:${FRONTEND_IMAGE_TAG}
+    build:
+      context: ../TOSCA-2
+      dockerfile: Dockerfile
+    container_name: tosca-prod-web
+    ports:
+      - "${WEB_HOST_PORT:-8080}:80"
+    depends_on:
+      django:
+        condition: service_started
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: tosca-prod-nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ../TOSCA-Backend/docker/nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - media_files:/usr/share/nginx/media:ro
+    depends_on:
+      django:
+        condition: service_started
+      web:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  prod_pg_data:
+  geoserver_data:
+  media_files:
+  static_files:
+  prod_django_logs:
